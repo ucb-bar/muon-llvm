@@ -11,6 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "RISCVTargetMachine.h"
+#include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/IR/InlineAsm.h"
 #include "MCTargetDesc/RISCVBaseInfo.h"
 #include "RISCV.h"
 #include "RISCVMachineFunctionInfo.h"
@@ -51,6 +53,52 @@ static cl::opt<bool> EnableRedundantCopyElimination(
 // 0: Disable Vortex Branch Divergence
 // 1: Enable Vortex Branch Divergence with only non-regional-only divergent branches structurized first
 // 2: Enable Vortex Branch Divergence with all divergent branches structurized first
+static cl::opt<bool> MuonHazardRenameLate(
+    "muon-hazard-rename-late", cl::Hidden, cl::init(false),
+    cl::desc("Run the Muon hazard rename pass again after post-RA scheduling "
+             "(needs -muon-hazard-rename)"));
+
+static cl::opt<bool> MuonAsmLatency(
+    "muon-asm-latency", cl::Hidden, cl::init(false),
+    cl::desc("Give inline asm results the latency of their first Muon "
+             "instruction (fdiv 24, fnexp 10, other FP 6, loads 30, mul 4, "
+             "else 2) for instruction scheduling"));
+
+namespace llvm {
+extern unsigned (*InlineAsmDefLatency)(const MachineInstr &);
+}
+
+static unsigned muonInlineAsmLatency(const MachineInstr &MI) {
+  StringRef Asm = MI.getOperand(InlineAsm::MIOp_AsmString).getSymbolName();
+  SmallVector<StringRef, 8> Lines;
+  Asm.split(Lines, '\n', -1, false);
+  unsigned NumInstrs = 0;
+  StringRef First;
+  for (StringRef L : Lines) {
+    L = L.trim();
+    if (L.empty() || L.starts_with("#") || L.starts_with("//"))
+      continue;
+    if (First.empty())
+      First = L.split(' ').first.split('\t').first;
+    ++NumInstrs;
+  }
+  if (First.empty())
+    return 0;
+  unsigned Lat = 2;
+  if (First.starts_with("fdiv") || First.starts_with("fsqrt"))
+    Lat = 24;
+  else if (First.starts_with("fnexp") || First.starts_with("fexp"))
+    Lat = 10;
+  else if (First.starts_with("f") && !First.starts_with("fence"))
+    Lat = 6;
+  else if (First.starts_with("lw") || First.starts_with("lh") ||
+           First.starts_with("lb"))
+    Lat = 30;
+  else if (First.starts_with("mul"))
+    Lat = 4;
+  return std::max(Lat, NumInstrs);
+}
+
 static cl::opt<int> VortexBranchDivergenceMode(
   "vortex-branch-divergence",
   cl::desc("Set Vortex Branch Divergence Mode"),
@@ -140,6 +188,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCVTarget() {
   initializeRISCVGatherScatterLoweringPass(*PR);
   initializeRISCVCodeGenPreparePass(*PR);
   initializeRISCVPostRAExpandPseudoPass(*PR);
+  initializeRISCVMuonHazardRenamePass(*PR);
   initializeRISCVMergeBaseOffsetOptPass(*PR);
   initializeRISCVOptWInstrsPass(*PR);
   initializeRISCVPreRAExpandPseudoPass(*PR);
@@ -187,6 +236,9 @@ RISCVTargetMachine::RISCVTargetMachine(const Target &T, const Triple &TT,
                         getEffectiveCodeModel(CM, CodeModel::Small), OL),
       TLOF(std::make_unique<RISCVELFTargetObjectFile>()) {
   initAsmInfo();
+
+  if (MuonAsmLatency)
+    InlineAsmDefLatency = muonInlineAsmLatency;
 
   // RISC-V supports the MachineOutliner.
   setMachineOutliner(true);
@@ -568,12 +620,16 @@ bool RISCVPassConfig::addGlobalInstructionSelect() {
 
 void RISCVPassConfig::addPreSched2() {
   addPass(createRISCVPostRAExpandPseudoPass());
+  if (TM->getOptLevel() != CodeGenOptLevel::None)
+    addPass(createRISCVMuonHazardRenamePass());
 
   // Emit KCFI checks for indirect calls.
   addPass(createKCFIPass());
 }
 
 void RISCVPassConfig::addPreEmitPass() {
+  if (TM->getOptLevel() != CodeGenOptLevel::None && MuonHazardRenameLate)
+    addPass(createRISCVMuonHazardRenamePass());
   addPass(&BranchRelaxationPassID);
   addPass(createRISCVMakeCompressibleOptPass());
 

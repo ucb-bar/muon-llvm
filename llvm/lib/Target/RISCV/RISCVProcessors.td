@@ -79,6 +79,8 @@ def ROCKET_RV64 : RISCVProcessorModel<"rocket-rv64",
 def ROCKET : RISCVTuneProcessorModel<"rocket",
                                      RocketModel>;
 
+def MUON : RISCVTuneProcessorModel<"muon", MuonModel>;
+
 def SIFIVE_7 : RISCVTuneProcessorModel<"sifive-7-series",
                                        SiFive7Model,
                                        [TuneSiFive7]>;

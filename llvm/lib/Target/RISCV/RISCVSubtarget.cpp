@@ -67,7 +67,7 @@ static cl::opt<unsigned> RISCVMinimumJumpTableEntries(
 
 static cl::opt<unsigned> RISCVMaxAllocatableGPRs(
     "riscv-max-allocatable-gprs", cl::Hidden, cl::init(128),
-    cl::desc("Maximum number of allocatable integer registers (32, 64, 128)."));
+    cl::desc("Maximum number of allocatable integer registers (32 to 128)."));
 
 static cl::opt<unsigned> RISCVStackWordStride(
     "riscv-stack-word-stride", cl::Hidden, cl::init(1),
@@ -214,10 +214,10 @@ unsigned RISCVSubtarget::getMinimumJumpTableEntries() const {
 }
 
 unsigned RISCVSubtarget::getMaxAllocatableGPRs() const {
-  if (RISCVMaxAllocatableGPRs == 32 || RISCVMaxAllocatableGPRs == 64 ||
-      RISCVMaxAllocatableGPRs == 128)
+  // x0..x(N-1) are allocatable, the rest reserved; any N in [32, 128] works.
+  if (RISCVMaxAllocatableGPRs >= 32 && RISCVMaxAllocatableGPRs <= 128)
     return RISCVMaxAllocatableGPRs;
-  report_fatal_error("riscv-max-allocatable-gprs must be one of 32, 64, 128");
+  report_fatal_error("riscv-max-allocatable-gprs must be in [32, 128]");
 }
 
 unsigned RISCVSubtarget::getStackWordStride() const {

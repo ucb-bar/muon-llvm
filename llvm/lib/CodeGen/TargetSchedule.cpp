@@ -168,11 +168,20 @@ static unsigned findUseIdx(const MachineInstr *MI, unsigned UseOperIdx) {
   return UseIdx;
 }
 
+namespace llvm {
+// Optional target override for the result latency of an inline asm statement
+// (Muon: most FP16 kernel code is single-instruction asm). 0 keeps the default.
+unsigned (*InlineAsmDefLatency)(const MachineInstr &) = nullptr;
+} // namespace llvm
+
 // Top-level API for clients that know the operand indices. This doesn't need to
 // return std::optional<unsigned>, as it always returns a valid latency.
 unsigned TargetSchedModel::computeOperandLatency(
   const MachineInstr *DefMI, unsigned DefOperIdx,
   const MachineInstr *UseMI, unsigned UseOperIdx) const {
+  if (InlineAsmDefLatency && DefMI->isInlineAsm())
+    if (unsigned L = InlineAsmDefLatency(*DefMI))
+      return L;
 
   const unsigned InstrLatency = computeInstrLatency(DefMI);
   const unsigned DefaultDefLatency = TII->defaultDefLatency(SchedModel, *DefMI);
@@ -256,6 +265,9 @@ unsigned TargetSchedModel::computeInstrLatency(const MCInst &Inst) const {
 unsigned
 TargetSchedModel::computeInstrLatency(const MachineInstr *MI,
                                       bool UseDefaultDefLatency) const {
+  if (InlineAsmDefLatency && MI->isInlineAsm())
+    if (unsigned L = InlineAsmDefLatency(*MI))
+      return L;
   // For the itinerary model, fall back to the old subtarget hook.
   // Allow subtargets to compute Bundle latencies outside the machine model.
   if (hasInstrItineraries() || MI->isBundle() ||

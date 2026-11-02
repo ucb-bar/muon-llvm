@@ -65,6 +65,9 @@ void initializeRISCVInsertVSETVLIPass(PassRegistry &);
 
 FunctionPass *createRISCVPostRAExpandPseudoPass();
 void initializeRISCVPostRAExpandPseudoPass(PassRegistry &);
+
+FunctionPass *createRISCVMuonHazardRenamePass();
+void initializeRISCVMuonHazardRenamePass(PassRegistry &);
 FunctionPass *createRISCVInsertReadWriteCSRPass();
 void initializeRISCVInsertReadWriteCSRPass(PassRegistry &);
 

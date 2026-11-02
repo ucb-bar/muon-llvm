@@ -104,6 +104,10 @@ RISCVRegisterInfo::getCalleeSavedRegs(const MachineFunction *MF) const {
   }
 }
 
+static cl::list<std::string> RISCVMaxGPRsPerFunction(
+    "riscv-max-allocatable-gprs-fn", cl::Hidden, cl::CommaSeparated,
+    cl::desc("Per-function allocatable GPR count, as name-substring:N"));
+
 BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   const RISCVFrameLowering *TFI = getFrameLowering(MF);
   BitVector Reserved(getNumRegs());
@@ -137,6 +141,19 @@ BitVector RISCVRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
       markSuperRegs(Reserved, Reg);
 
   unsigned MaxAllocatableGPRs = Subtarget.getMaxAllocatableGPRs();
+  // -riscv-max-allocatable-gprs-fn=name:N,...: functions whose name contains `name` allocate from
+  // x0..x(N-1) instead (Muon: the renamer budget is per launch, so one hot leaf can take more
+  // registers than the rest of the object).
+  for (const std::string &Spec : RISCVMaxGPRsPerFunction) {
+    StringRef Name, Num;
+    std::tie(Name, Num) = StringRef(Spec).rsplit(':');
+    unsigned N;
+    if (!Num.getAsInteger(10, N) && N >= 32 && N <= 128 &&
+        MF.getName().contains(Name)) {
+      MaxAllocatableGPRs = N;
+      break;
+    }
+  }
   if (MaxAllocatableGPRs < 128) {
     for (MCPhysReg Reg = RISCV::X0 + MaxAllocatableGPRs; Reg <= RISCV::X127;
          Reg++)
